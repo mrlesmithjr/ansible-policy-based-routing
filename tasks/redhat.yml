@@ -13,6 +13,6 @@
 
 - name: redhat | Installing IPRoute2 Package
   dnf:
-    name: "iproute2"
+    name: "iproute"
     state: "present"
   when: ansible_distribution == "Fedora"
