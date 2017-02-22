@@ -36,7 +36,6 @@
     dest: "/etc/network/interfaces"
     line: "ip route add default via {{ item.gateway }} table {{ item.table }}"
     state: "{{ item.state }}"
-  register: "pbr_route"
   with_items: '{{ policy_based_routing_rules }}'
   when: >
         ansible_os_family == "Debian" and
@@ -49,7 +48,6 @@
     dest: "/etc/network/interfaces"
     line: "up ip rule add from {{ item.source }} table {{ item.table }}"
     state: "{{ item.state }}"
-  # register:  "pbr_rule"
   with_items: '{{ policy_based_routing_rules }}'
   when: >
         ansible_os_family == "Debian" and
@@ -64,7 +62,6 @@
     dest: "/etc/network/interfaces"
     line: "up ip rule add to {{ item.destination }} table {{ item.table }}"
     state: "{{ item.state }}"
-  # register:  "pbr_rule"
   with_items: '{{ policy_based_routing_rules }}'
   when: >
         ansible_os_family == "Debian" and
@@ -79,7 +76,6 @@
     dest: "/etc/network/interfaces"
     line: "up ip rule add from {{ item.source }} to {{ item.destination }} table {{ item.table }}"
     state: "{{ item.state }}"
-  # register:  "pbr_rule"
   with_items: '{{ policy_based_routing_rules }}'
   when: >
         ansible_os_family == "Debian" and
@@ -145,6 +141,111 @@
   when: >
         item.state == "present" and
         item.gateway not in ip_route_list_table.results[0].stdout
+
+# We capture the network device associated with each route in order to create
+# persistent routes and rules
+- name: pbr_rules | Capturing Policy Based Routing Tables (RedHat)
+  shell: "ip route list table {{ item.table }} | grep dev | awk '{ print $5 }'"
+  register: "redhat_ip_route_dev_list"
+  changed_when: false
+  with_items: '{{ policy_based_routing_rules }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.persistent
+
+# Checking if routing files exists for each interface
+- name: pbr_rules | Checking Status Of Policy Based Routing Interface Files (RedHat)
+  stat:
+    path: "/etc/sysconfig/network-scripts/route-{{ item.stdout }}"
+  register: "redhat_ip_route_files"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and
+        item.stdout != ''
+
+# Checking if routing files exists for each interface
+- name: pbr_rules | Checking Status Of Policy Based Routing Interface Files (RedHat)
+  stat:
+    path: "/etc/sysconfig/network-scripts/rule-{{ item.stdout }}"
+  register: "redhat_ip_rule_files"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and
+        item.stdout != ''
+
+# Creating files to contain persistent routes
+- name: pbr_rules | Ensuring Policy Based Routing Interface Files Exist (RedHat)
+  file:
+    path: "/etc/sysconfig/network-scripts/route-{{ item.stdout }}"
+    state: "touch"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and item.stdout != '' and
+        not redhat_ip_route_files.results[0].stat.exists
+
+# Creating files to contain persistent routes
+- name: pbr_rules | Ensuring Policy Based Routing Interface Files Exist (RedHat)
+  file:
+    path: "/etc/sysconfig/network-scripts/rule-{{ item.stdout }}"
+    state: "touch"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and item.stdout != '' and
+        not redhat_ip_rule_files.results[0].stat.exists
+
+# Append pbr routes to /etc/sysconfig/network-scripts/route-interface for persistence
+- name: pbr_rules | Configuring Policy Based Routing Table Rules (For persistence)
+  lineinfile:
+    dest: "/etc/sysconfig/network-scripts/route-{{ item.stdout }}"
+    line: "default table {{ item.item.table }} via {{ item.item.gateway }}"
+    state: "{{ item.item.state }}"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent
+
+# Append pbr routes to /etc/sysconfig/network-scripts/route-interface for persistence
+- name: pbr_rules | Configuring Policy Based Routing Table Rules (For persistence)
+  lineinfile:
+    dest: "/etc/sysconfig/network-scripts/rule-{{ item.stdout }}"
+    line: "from {{ item.item.source }} table {{ item.item.table }}"
+    state: "{{ item.item.state }}"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and
+        (item.item.source is defined and
+          item.item.destination is not defined)
+
+# Append pbr routes to /etc/sysconfig/network-scripts/route-interface for persistence
+- name: pbr_rules | Configuring Policy Based Routing Table Rules (For persistence)
+  lineinfile:
+    dest: "/etc/sysconfig/network-scripts/rule-{{ item.stdout }}"
+    line: "to {{ item.item.destination}} table {{ item.item.table }}"
+    state: "{{ item.item.state }}"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and
+        (item.item.source is not defined and
+          item.item.destination is defined)
+
+# Append pbr routes to /etc/sysconfig/network-scripts/route-interface for persistence
+- name: pbr_rules | Configuring Policy Based Routing Table Rules (For persistence)
+  lineinfile:
+    dest: "/etc/sysconfig/network-scripts/rule-{{ item.stdout }}"
+    line: "from {{ item.item.source }} to {{ item.item.destination}} table {{ item.item.table }}"
+    state: "{{ item.item.state }}"
+  with_items: '{{ redhat_ip_route_dev_list.results }}'
+  when: >
+        ansible_os_family == "RedHat" and
+        item.item.persistent and
+        (item.item.source is defined and
+          item.item.destination is defined)
 
 - name: pbr_rules | Removing Policy Based Routing Table Rules
   shell: "ip route del default via {{ item.gateway }} table {{ item.table }}"
